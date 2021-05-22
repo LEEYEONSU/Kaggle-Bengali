@@ -1,0 +1,7 @@
+scheduler:
+  epoch: 100
+  type: multistep
+  params:
+    milestones: [250, 375]
+    gamma: 0.1
+  
