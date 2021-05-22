@@ -1,0 +1,3 @@
+tqdm
+git+https://github.com/wbaek/theconf.git@v0.1.7
+torch

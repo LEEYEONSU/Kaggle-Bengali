@@ -1,0 +1,31 @@
+dataset:
+  type: cifar10
+  train:
+    batch_size: 1024
+    shuffle: True
+    drop_last: True
+    preprocess:
+      - type: pad
+        params:
+          padding: 4
+      - type: randomcrop
+        params:
+          size: 32
+      - type: horizontal
+      - type: tensor
+      - type: normalize
+        params:
+          mean: [0.4914, 0.4822, 0.4465]
+          std: [0.2023, 0.1994, 0.2010]
+          inplace: True
+  test:
+    batch_size: 512
+    preprocess:
+      - type: tensor
+      - type: normalize
+        params:
+          mean: [0.4914, 0.4822, 0.4465]
+          std: [0.2023, 0.1994, 0.2010]
+
+
+

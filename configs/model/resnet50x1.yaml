@@ -1,0 +1,3 @@
+architecture:
+  type: R50x1
+  num_classes: 10
