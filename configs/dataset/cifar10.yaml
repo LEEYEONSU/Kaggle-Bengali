@@ -4,6 +4,7 @@ dataset:
     batch_size: 1024
     shuffle: True
     drop_last: True
+    train: True
     preprocess:
       - type: pad
         params:

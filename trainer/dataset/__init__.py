@@ -11,7 +11,7 @@ def create(config, world_size=1, local_rank=-1, mode='train'):
     if config['type'] == 'cifar10':
         transformers = transforms.Compose([preprocess(t) for t in params['preprocess']] )
         
-        dataset = torchvision.datasets.CIFAR10(root='/root', download=True, transform=transformers)
+        dataset = torchvision.datasets.CIFAR10(root='/root', download=True, transform=transformers, train = params.get('train', False))
 
         if local_rank >= 0:
             sampler = torch.utils.data.distributed.DistributedSampler(
@@ -31,7 +31,6 @@ def create(config, world_size=1, local_rank=-1, mode='train'):
             drop_last=params.get('drop_last', False),
             sampler=sampler
         )
-
         return dataloader, sampler
     else:
         raise AttributeError(f'not support dataset config: {config}')
