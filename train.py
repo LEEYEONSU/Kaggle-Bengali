@@ -53,24 +53,27 @@ def main(flags):
             dist.broadcast(x, 0)
         torch.cuda.synchronize()
 
-
+    is_best = 0
     for epoch in range(C.get()['scheduler']['epoch']):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
+        print(f'current lr {optimizer.param_groups[0]["lr"]:.5e}')
         lr_scheduler.step()
         train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
 
         if epoch % 10 == 0 and flags.is_master:
-            evaluate(epoch, model, test_loader, device, flags)
-        
-    
+            val_acc = evaluate(epoch, model, test_loader, device, flags, criterion)
+            is_best = val_acc if is_best < val_acc else is_best
 
-    
+        print(f'THE BEST MODEL val test :{is_best:3f}')
+        
 def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flags):
     one_epoch_loss = 0
     train_total = 0
     train_hit = 0
+
+    model.train()
 
     if flags.use_amp:
         scaler = torch.cuda.amp.GradScaler()
@@ -79,7 +82,6 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
         image = image.to(device=device, non_blocking=True)
         label = label.to(device=device, non_blocking=True)
 
-        
         if flags.use_amp:
             with torch.cuda.amp.autocast():
                 y_pred = model(image)
@@ -96,15 +98,15 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
-        
 
         one_epoch_loss += loss.item()
         _, y_pred = y_pred.max(1)            
-        # train_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-        # train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
+        train_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
+        train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
 
-        
-    if flags.is_master:
+    train_acc = train_hit/train_total
+    print( f'Epoch:{epoch + 1}' ,f'Losses: {one_epoch_loss / (step + 1)}', f'Acc: {train_acc * 100}%')
+    # if flags.is_master:
     #     gather_hit = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
     #     torch.distributed.all_gather(gather_hit, train_hit)
 
@@ -114,25 +116,35 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
     #     print(gather_hit)
     #     print(gather_total)
     #     train_acc = sum(gather_hit) / sum(gather_total)
-        print(f'Losses: {one_epoch_loss / (step + 1)}')
+        # print(f'Losses: {one_epoch_loss / (step + 1)}')
     #     print(f'Acc: {train_acc * 100}%')
     #     print(f'Train total: {gather_total}')
 
 @torch.no_grad()
-def evaluate(epoch, model, dataloader, device, flags):
+def evaluate(epoch, model, dataloader, device, flags, criterion):
 
-    validation_loss = 0
+    validation_losses = 0
+    val_hit = 0
+    val_total = 0
+
+    model.eval()
 
     for step, (image, label) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
         image = image.to(device=device, non_blocking=True)
         label = label.to(device=device, non_blocking=True)
 
         y_pred = model(image)
+        loss = criterion(y_pred, label)
 
+        validation_losses += loss.item()
+        _, y_pred = y_pred.max(1)
+        val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
+        val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
+    
+    val_acc = val_hit / val_total
+    print(f'Val Losses: {validation_losses / (step + 1)}', f'Val Acc: {val_acc * 100}%')
 
-
-
-
+    return val_acc
 
 if __name__ == '__main__':
     parser = theconf.ConfigArgumentParser(conflict_handler='resolve')
@@ -146,7 +158,6 @@ if __name__ == '__main__':
     parser.add_argument('--use_amp', action='store_true')
 
     flags = parser.parse_args()
-    
 
     logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s', stream=sys.stderr)
 

@@ -4,6 +4,7 @@ dataset:
     batch_size: 1024
     shuffle: True
     drop_last: True
+    train: True
     preprocess:
       - type: pad
         params:
@@ -19,7 +20,7 @@ dataset:
           std: [0.2023, 0.1994, 0.2010]
           inplace: True
   test:
-    batch_size: 512
+    batch_size: 128
     preprocess:
       - type: tensor
       - type: normalize
