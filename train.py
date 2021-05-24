@@ -58,7 +58,7 @@ def main(flags):
         if train_sampler is not None:
             train_sampler.set_epoch(epoch)
 
-        print('current lr {:.5e}'.format(optimizer.param_groups[0]['lr']))
+        print(f'current lr {optimizer.param_groups[0]["lr"]:.5e}')
         lr_scheduler.step()
         train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
 
