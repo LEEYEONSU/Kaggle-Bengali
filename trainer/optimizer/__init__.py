@@ -8,7 +8,6 @@ def create(config, model_params):
             params=model_params,
             lr=config['lr']
         )
-
     elif config['type'] == 'sgd':
         return torch.optim.SGD(
             params = model_params,

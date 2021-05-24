@@ -105,7 +105,7 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
         train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
 
     train_acc = train_hit/train_total
-    print( f'Epoch:{epoch+1}' ,f'Losses: {one_epoch_loss / (step + 1)}', f'Acc: {train_acc * 100}%')
+    print( f'Epoch:{epoch + 1}' ,f'Losses: {one_epoch_loss / (step + 1)}', f'Acc: {train_acc * 100}%')
     # if flags.is_master:
     #     gather_hit = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
     #     torch.distributed.all_gather(gather_hit, train_hit)
