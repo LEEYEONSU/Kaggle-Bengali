@@ -64,9 +64,9 @@ def main(flags):
 
         if epoch % 10 == 0 and flags.is_master:
             val_acc = evaluate(epoch, model, test_loader, device, flags, criterion)
-            if is_best < val_acc : is_best = val_acc
+            is_best = val_acc if is_best < val_acc else is_best
 
-        print('THE BEST MODEL val test : {is_best:.3f} saved. '.format(is_best = is_best))
+        print(f'THE BEST MODEL val test :{is_best:3f}')
         
 def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flags):
     one_epoch_loss = 0
@@ -138,10 +138,10 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
 
         validation_losses += loss.item()
         _, y_pred = y_pred.max(1)
-        val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking = True)
-        val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking = True)
+        val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
+        val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
     
-    val_acc = val_hit/val_total
+    val_acc = val_hit / val_total
     print(f'Val Losses: {validation_losses / (step + 1)}', f'Val Acc: {val_acc * 100}%')
 
     return val_acc

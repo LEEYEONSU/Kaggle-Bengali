@@ -13,8 +13,8 @@ def create(config, model_params):
         return torch.optim.SGD(
             params = model_params,
             lr = config['lr'],
-            weight_decay = config['weight_decay'],
-            momentum = config['momentum']
+            weight_decay=config['weight_decay'],
+            momentum=config['momentum']
         )
     else:
         raise AttributeError(f'not support optmizer config: {config}')
