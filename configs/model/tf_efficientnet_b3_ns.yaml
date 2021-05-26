@@ -1,0 +1,4 @@
+architecture:
+  type: tf_efficientnet_b3_ns
+  num_classes: 10
+  pretrained: True
