@@ -20,6 +20,8 @@ class CustomDataset(Dataset):
         x = np.array(self.x_data[idx][1:], dtype = float)
         x = torch.Tensor(x)
         img = torch.reshape(x, (137, 236))
+        img = img.unsqueeze_(0)
+        img = img.repeat(3,1,1)
 
         target = self.y_data[idx][1:4]
         target = np.array(target, dtype = float)
@@ -27,16 +29,13 @@ class CustomDataset(Dataset):
 
         return img, target
     
-# data_path = './data/train_image_data_0.parquet'
-data_path = './data/train_data0.npy'
-label_path = './data/train.csv'
-test = CustomDataset(data_path, label_path)
-dataloader = DataLoader(test, batch_size = 2, shuffle = True)
+if __name__ == '__main__':
 
-for batch_idx, samples in enumerate(dataloader):
-    x_train, y_train = samples
-    print(samples)
+    data_path = './data/train_data0.npy'
+    label_path = './data/train.csv'
+    test = CustomDataset(data_path, label_path)
+    dataloader = DataLoader(test, batch_size = 2, shuffle = True)
 
-
-
-    
+    for batch_idx, samples in enumerate(dataloader):
+        x_train, y_train = samples
+        print(np.shape(x_train))
