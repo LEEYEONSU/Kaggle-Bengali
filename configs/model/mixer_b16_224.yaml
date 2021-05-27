@@ -1,0 +1,4 @@
+architecture:
+  type: mixer_b16_224
+  num_classes: 10
+  pretrained: True

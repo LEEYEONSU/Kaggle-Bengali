@@ -1,0 +1,4 @@
+architecture:
+  type: wide_resnet101_2
+  num_classes: 10
+  pretrained: True

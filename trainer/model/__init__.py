@@ -1,5 +1,6 @@
 import torch
 import torchvision.models as models
+import timm
 
 from trainer.model.resnet import resnet32
 
@@ -10,7 +11,8 @@ def create(config):
     # resnet32 implementation test
     elif config['type'] == 'resnet32':
         return resnet32()
-
     else:
-        raise AttributeError(f'not support architecture config: {config}')
-    
+        try:
+            return timm.create_model(config['type'], pretrained=config.get('pretrained', False), num_classes=config['num_classes'])
+        except:
+            raise AttributeError(f'not support architecture config: {config}')
