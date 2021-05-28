@@ -8,14 +8,16 @@ import torch
 import torch.cuda
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-
+from tensorboardX import SummaryWriter
 
 import theconf
 from theconf import Config as C
 
 import trainer
 
+summary = SummaryWriter()
 def main(flags):
+
     device = torch.device(type= 'cuda', index=max(0, int(os.environ.get('LOCAL_RANK', -1))))
     if flags.local_rank >= 0:
         dist.init_process_group(backend=flags.dist_backend, init_method= 'env://', world_size=int(os.environ['WORLD_SIZE']))
@@ -60,13 +62,21 @@ def main(flags):
 
         print(f'current lr {optimizer.param_groups[0]["lr"]:.5e}')
         lr_scheduler.step()
-        train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
+        train_acc, train_loss = train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
 
-        if epoch % 10 == 0 and flags.is_master:
-            val_acc = evaluate(epoch, model, test_loader, device, flags, criterion)
+        if epoch % 1 == 0 and flags.is_master:
+            val_acc, val_loss = evaluate(epoch, model, test_loader, device, flags, criterion)
             is_best = val_acc if is_best < val_acc else is_best
 
         print(f'THE BEST MODEL val test :{is_best:3f}')
+                
+    ### tensorboard
+        summary.add_scalar("Loss/train", train_loss, epoch)
+        summary.add_scalar("Acc/train", train_acc, epoch)
+        summary.add_scalar("Loss/val", val_loss, epoch)
+        summary.add_scalar("Acc/val", val_acc, epoch)
+        summary.add_scalar("learning_rate", optimizer.param_groups[0]["lr"], epoch)
+        summary.close()
         
 def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flags):
     one_epoch_loss = 0
@@ -105,7 +115,11 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
         train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
 
     train_acc = train_hit/train_total
-    print( f'Epoch:{epoch + 1}' ,f'Losses: {one_epoch_loss / (step + 1)}', f'Acc: {train_acc * 100}%')
+    train_loss = one_epoch_loss / (step + 1)
+    print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'Acc: {train_acc * 100}%')
+
+    return train_acc, train_loss
+
     # if flags.is_master:
     #     gather_hit = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
     #     torch.distributed.all_gather(gather_hit, train_hit)
@@ -142,9 +156,9 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
         val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
     
     val_acc = val_hit / val_total
-    print(f'Val Losses: {validation_losses / (step + 1)}', f'Val Acc: {val_acc * 100}%')
-
-    return val_acc
+    val_loss = validation_losses / (step + 1)
+    print(f'Val Losses: {val_loss}', f'Val Acc: {val_acc * 100}%')
+    return val_acc, val_loss
 
 if __name__ == '__main__':
     parser = theconf.ConfigArgumentParser(conflict_handler='resolve')
