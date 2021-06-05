@@ -3,7 +3,6 @@ import pyarrow.parquet as pq
 import pandas as pd
 import numpy as np
 
-
 # Merge data to one file 
 p0 = pq.ParquetDataset('./data/bengaliai-cv19/train_image_data_0.parquet')
 p1 = pq.ParquetDataset('./data/bengaliai-cv19/train_image_data_1.parquet')
@@ -31,4 +30,34 @@ dataset.extend(t1)
 dataset.extend(t2)
 dataset.extend(t3)
 
-np.save('./data/train_dataset.npy', dataset)
+t = []
+for i in tqdm(range(len(dataset))):
+    img = np.reshape(dataset[i,1:],(137,236))
+     
+    if not 1 in img[:,:6] or not 1 in img[:,230:]:
+        img = img[:,6:230]
+    
+    else : 
+        print('test---', i)
+        cnt = 0
+        while cnt <= 12:
+            if not 1 in img[:,:1] or not 1 in img[:,-1]:
+                img = img[:,1:]
+                img = img[:,:-1]
+                cnt += 2
+
+            elif not 1 in img[:,:1] and 1 in img[:,-1]:
+                img = img[:,:1]
+                cnt += 1
+            
+            elif 1 in img[:,:1] and not 1 in img[:,-1]:
+                img = img[:,:-1]
+                cnt += 1
+            else : 
+                img = img[:,1:]
+                img = img[:,:-1]
+                cnt += 2
+    t.append(img)
+print(np.shape(t))
+
+# np.save('./data/train_dataset.npy', dataset)
