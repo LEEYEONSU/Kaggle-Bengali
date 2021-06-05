@@ -1,2 +1,3 @@
 loss:
   type: ce
+  weight: [1., 1., 1.]
