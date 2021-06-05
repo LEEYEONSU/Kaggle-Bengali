@@ -20,6 +20,8 @@ class CustomDataset(Dataset):
         x = np.array(self.x_data[idx][1:], dtype = float)
         x = torch.Tensor(x)
         img = torch.reshape(x, (137, 236))
+        img = img[:, :224]
+        img = nn.ZeroPad2d(0,0,0,87)
         img = img.unsqueeze_(0)
         img = img.repeat(3,1,1)
 
@@ -38,4 +40,4 @@ if __name__ == '__main__':
 
     for batch_idx, samples in enumerate(dataloader):
         x_train, y_train = samples
-        print(np.shape(x_train))
+        
