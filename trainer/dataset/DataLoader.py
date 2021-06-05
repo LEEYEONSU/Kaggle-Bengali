@@ -24,10 +24,11 @@ class CustomDataset(Dataset):
         img = img.repeat(3,1,1)
 
         target = self.y_data[idx][1:4]
-        target = np.array(target, dtype = float)
-        target = torch.Tensor(target)
+        target_a = torch.Tensor(np.array(target[0], dtype = float))
+        target_b = torch.Tensor(np.array(target[1], dtype = float))
+        target_c = torch.Tensor(np.array(target[2], dtype = float))
 
-        return img, target
+        return img, target_a, target_b, target_c
     
 if __name__ == '__main__':
 

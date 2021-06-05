@@ -1,4 +1,4 @@
 architecture:
   type: wide_resnet50_2
-  num_classes: 10
+  num_classes: [168, 11, 8]
   pretrained: True

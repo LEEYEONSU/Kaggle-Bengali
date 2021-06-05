@@ -13,6 +13,9 @@ from tensorboardX import SummaryWriter
 import theconf
 from theconf import Config as C
 
+import numpy as np
+from sklearn.metrics import recall_score
+
 import trainer
 
 summary = SummaryWriter()
@@ -68,6 +71,7 @@ def main(flags):
             val_acc, val_loss = evaluate(epoch, model, test_loader, device, flags, criterion)
             is_best = val_acc if is_best < val_acc else is_best
 
+        torch.cuda.synchronize()
         print(f'THE BEST MODEL val test :{is_best:3f}')
                 
     ### tensorboard
@@ -88,14 +92,17 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
     if flags.use_amp:
         scaler = torch.cuda.amp.GradScaler()
 
-    for step, (image, label) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
+    scores = []
+    for step, (image, label_a, label_b, label_c) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
         image = image.to(device=device, non_blocking=True)
-        label = label.to(device=device, non_blocking=True)
+        label_a = label_a.to(device=device, non_blocking=True)
+        label_b = label_b.to(device=device, non_blocking=True)
+        label_c = label_c.to(device=device, non_blocking=True)
 
         if flags.use_amp:
             with torch.cuda.amp.autocast():
                 y_pred = model(image)
-                loss = criterion(y_pred, label)
+                loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
                 assert y_pred.dtype == torch.float16, f'{y_pred.dtype}'
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -104,35 +111,42 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
 
         else:
             y_pred = model(image)
-            loss = criterion(y_pred, label)
+            loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
         one_epoch_loss += loss.item()
-        _, y_pred = y_pred.max(1)            
-        train_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-        train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
+        _, y_pred_a = y_pred[0].max(1)
+        _, y_pred_b = y_pred[1].max(1)
+        _, y_pred_c = y_pred[2].max(1)
 
-    train_acc = train_hit/train_total
-    train_loss = one_epoch_loss / (step + 1)
-    print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'Acc: {train_acc * 100}%')
+        if flags.is_master:
+            gather_y_true_a = [torch.ones_like(label_a) for _ in range(dist.get_world_size())]
+            gather_y_true_b = [torch.ones_like(label_b) for _ in range(dist.get_world_size())]
+            gather_y_true_c = [torch.ones_like(label_c) for _ in range(dist.get_world_size())]
+            gather_y_pred_a = [torch.ones_like(y_pred_a) for _ in range(dist.get_world_size())]
+            gather_y_pred_b = [torch.ones_like(y_pred_b) for _ in range(dist.get_world_size())]
+            gather_y_pred_c = [torch.ones_like(y_pred_c) for _ in range(dist.get_world_size())]
+            dist.all_gather(gather_y_true_a, label_a)
+            dist.all_gather(gather_y_true_b, label_b)
+            dist.all_gather(gather_y_true_c, label_c)
+            dist.all_gather(gather_y_pred_a, y_pred_a)
+            dist.all_gather(gather_y_pred_b, y_pred_b)
+            dist.all_gather(gather_y_pred_c, y_pred_c)
+
+            semi_scores = []
+            semi_scores.append(recall_score(gather_y_true_a, gather_y_pred_a, average='macro'))
+            semi_scores.append(recall_score(gather_y_true_b, gather_y_pred_b, average='macro'))
+            semi_scores.append(recall_score(gather_y_true_c, gather_y_pred_c, average='macro'))
+            scores.append(np.average(semi_scores, weights=[2,1,1]))
+    
+    if flags.is_master:
+        final_score = np.average(scores)
+        train_loss = one_epoch_loss / (step + 1)
+        print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'macro-average-recall: {final_score}%')
 
     return train_acc, train_loss
-
-    # if flags.is_master:
-    #     gather_hit = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
-    #     torch.distributed.all_gather(gather_hit, train_hit)
-
-    #     gather_total = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
-    #     torch.distributed.all_gather(gather_total, train_total)
-
-    #     print(gather_hit)
-    #     print(gather_total)
-    #     train_acc = sum(gather_hit) / sum(gather_total)
-        # print(f'Losses: {one_epoch_loss / (step + 1)}')
-    #     print(f'Acc: {train_acc * 100}%')
-    #     print(f'Train total: {gather_total}')
 
 @torch.no_grad()
 def evaluate(epoch, model, dataloader, device, flags, criterion):
@@ -143,7 +157,7 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
 
     model.eval()
 
-    for step, (image, label) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
+    for step, (image, label_a, label_b, label_c) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
         image = image.to(device=device, non_blocking=True)
         label = label.to(device=device, non_blocking=True)
 

@@ -2,7 +2,8 @@ import torch
 import torchvision.models as models
 import timm
 
-from trainer.model.resnet import resnet32
+from .resnet import resnet32
+from .model_wrapper import model_wrapper
 
 def create(config):
     if config['type'] == 'R50x1':
@@ -13,6 +14,6 @@ def create(config):
         return resnet32()
     else:
         try:
-            return timm.create_model(config['type'], pretrained=config.get('pretrained', False), num_classes=config['num_classes'])
+            return model_wrapper(configs)
         except:
             raise AttributeError(f'not support architecture config: {config}')
