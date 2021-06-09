@@ -18,6 +18,8 @@ from sklearn.metrics import recall_score
 
 import trainer
 
+from trainer.dataset.customdata import CustomDataset
+
 summary = SummaryWriter()
 def main(flags):
 
@@ -42,12 +44,29 @@ def main(flags):
     if flags.local_rank >= 0:
         model = DDP(model, device_ids=[flags.local_rank], output_device=flags.local_rank)
 
+    if C.get()['dataset']['type'] == 'cifar10':
+        dataset = torchvision.datasets.CIFAR10(root='/root', download=True, transform=transformers, train = params.get('train', False))
+    elif C.get()['dataset']['type']== 'bengali':
+        dataset = {}
+        data = CustomDataset(C.get()['dataset']['train_img_path'], C.get()['dataset']['label_path'])
+        dataset['train'], dataset['val'] = torch.utils.data.random_split(data, [160840, 40000], generator=torch.Generator().manual_seed(42))
+    else:
+        raise AttributeError(f'not support dataset config: {config}')
+
     train_loader, train_sampler = trainer.dataset.create(C.get()['dataset'],
+                                              dataset, 
                                               int(os.environ.get('WORLD_SIZE', 1)), 
                                               int(os.environ.get('LOCAL_RANK', -1)),
                                               mode='train')
-    test_loader, _ = trainer.dataset.create(C.get()['dataset'],
-                                              mode='test')
+
+    val_loader, _ = trainer.dataset.create(C.get()['dataset'],
+                                              dataset, 
+                                              mode='val')
+                
+    # test_loader, _ = trainer.dataset.create(C.get()['dataset'],
+    #                                           dataset,
+    #                                           mode='test')
+
     optimizer = trainer.optimizer.create(C.get()['optimizer'], model.parameters())
     lr_scheduler = trainer.scheduler.create(C.get()['scheduler'], optimizer)
 
@@ -68,7 +87,7 @@ def main(flags):
         train_acc, train_loss = train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
 
         if epoch % 1 == 0 and flags.is_master:
-            val_acc, val_loss = evaluate(epoch, model, test_loader, device, flags, criterion)
+            val_acc, val_loss = evaluate(epoch, model, val_loader, device, flags, criterion)
             is_best = val_acc if is_best < val_acc else is_best
 
         torch.cuda.synchronize()
