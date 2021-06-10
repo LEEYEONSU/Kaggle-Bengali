@@ -31,7 +31,12 @@ class CustomDataset(Dataset):
 
         img = img.repeat(3,1,1)
 
+        # ohe = [torch.eye(num_classes) for num_classes in [168, 11, 8]]
         target1, target2, target3 = self.y_data[idx][1:4]
+        # target1 = ohe[0][target1].long()
+        # target2 = ohe[1][target2].long()
+        # target3 = ohe[2][target3].long()
+
         return img, target1, target2, target3
     
 if __name__ == '__main__':
