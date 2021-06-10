@@ -153,11 +153,16 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
             dist.all_gather(gather_y_pred_a, y_pred_a)
             dist.all_gather(gather_y_pred_b, y_pred_b)
             dist.all_gather(gather_y_pred_c, y_pred_c)
-
+            
             semi_scores = []
-            semi_scores.append(recall_score(gather_y_true_a, gather_y_pred_a, average='macro'))
-            semi_scores.append(recall_score(gather_y_true_b, gather_y_pred_b, average='macro'))
-            semi_scores.append(recall_score(gather_y_true_c, gather_y_pred_c, average='macro'))
+            semi_scores.append(recall_score(label_a.cpu().numpy(), y_pred_a.cpu().numpy(), average='macro'))
+            semi_scores.append(recall_score(label_b.cpu().numpy(), y_pred_b.cpu().numpy(), average='macro'))
+            semi_scores.append(recall_score(label_c.cpu().numpy(), y_pred_c.cpu().numpy(), average='macro'))
+
+            ### DDP 하려면 이부분 수정 ###
+            # semi_scores.append(recall_score(gather_y_true_a.detach().cpu().numpy(), gather_y_pred_a.detach().cpu().numpy(), average='macro'))
+            # semi_scores.append(recall_score(gather_y_true_b, gather_y_pred_b, average='macro'))
+            # semi_scores.append(recall_score(gather_y_true_c, gather_y_pred_c, average='macro'))
             scores.append(np.average(semi_scores, weights=[2,1,1]))
     
     if flags.is_master:
@@ -165,7 +170,7 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
         train_loss = one_epoch_loss / (step + 1)
         print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'macro-average-recall: {final_score}%')
 
-    return train_acc, train_loss
+    return final_score, train_loss
 
 @torch.no_grad()
 def evaluate(epoch, model, dataloader, device, flags, criterion):
@@ -176,19 +181,32 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
 
     model.eval()
 
+    val_scores = []
     for step, (image, label_a, label_b, label_c) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
         image = image.to(device=device, non_blocking=True)
-        label = label.to(device=device, non_blocking=True)
+        label_a = label_a.to(device=device, non_blocking=True)
+        label_b = label_b.to(device=device, non_blocking=True)
+        label_c = label_c.to(device=device, non_blocking=True)
 
         y_pred = model(image)
-        loss = criterion(y_pred, label)
+        loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
 
         validation_losses += loss.item()
-        _, y_pred = y_pred.max(1)
-        val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-        val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
+        _, y_pred_a = y_pred[0].max(1)
+        _, y_pred_b = y_pred[1].max(1)
+        _, y_pred_c = y_pred[2].max(1)
+        
+        val_semi_scores = []
+        val_semi_scores.append(recall_score(label_a.cpu().numpy(), y_pred_a.cpu().numpy(), average='macro'))
+        val_semi_scores.append(recall_score(label_b.cpu().numpy(), y_pred_b.cpu().numpy(), average='macro'))
+        val_semi_scores.append(recall_score(label_c.cpu().numpy(), y_pred_c.cpu().numpy(), average='macro'))
+        val_scores.append(np.average(val_semi_scores, weights=[2,1,1]))
+
+    #     val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
+    #     val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
     
-    val_acc = val_hit / val_total
+    # val_acc = val_hit / val_total
+    val_acc = np.average(val_scores)
     val_loss = validation_losses / (step + 1)
     print(f'Val Losses: {val_loss}', f'Val Acc: {val_acc * 100}%')
     return val_acc, val_loss
