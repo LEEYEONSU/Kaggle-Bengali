@@ -50,9 +50,4 @@ for i in range(4):
 with open('train_dataset.pickle', 'wb') as fw:
     pickle.dump(dataset, fw)
 
-    # print('start save')
-    # np.save(f'./data/train_dataset_{i}.npy', dataset)
-    # print('done')
-
-
         
