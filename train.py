@@ -13,7 +13,12 @@ from tensorboardX import SummaryWriter
 import theconf
 from theconf import Config as C
 
+import numpy as np
+from sklearn.metrics import recall_score
+
 import trainer
+
+from trainer.dataset.customdata import CustomDataset
 
 summary = SummaryWriter()
 def main(flags):
@@ -39,12 +44,29 @@ def main(flags):
     if flags.local_rank >= 0:
         model = DDP(model, device_ids=[flags.local_rank], output_device=flags.local_rank)
 
+    if C.get()['dataset']['type'] == 'cifar10':
+        dataset = torchvision.datasets.CIFAR10(root='/root', download=True, transform=transformers, train = params.get('train', False))
+    elif C.get()['dataset']['type']== 'bengali':
+        dataset = {}
+        data = CustomDataset(C.get()['dataset']['train_img_path'], C.get()['dataset']['label_path'])
+        dataset['train'], dataset['val'] = torch.utils.data.random_split(data, [160840, 40000], generator=torch.Generator().manual_seed(42))
+    else:
+        raise AttributeError(f'not support dataset config: {config}')
+
     train_loader, train_sampler = trainer.dataset.create(C.get()['dataset'],
+                                              dataset, 
                                               int(os.environ.get('WORLD_SIZE', 1)), 
                                               int(os.environ.get('LOCAL_RANK', -1)),
                                               mode='train')
-    test_loader, _ = trainer.dataset.create(C.get()['dataset'],
-                                              mode='test')
+
+    val_loader, _ = trainer.dataset.create(C.get()['dataset'],
+                                              dataset, 
+                                              mode='val')
+                
+    # test_loader, _ = trainer.dataset.create(C.get()['dataset'],
+    #                                           dataset,
+    #                                           mode='test')
+
     optimizer = trainer.optimizer.create(C.get()['optimizer'], model.parameters())
     lr_scheduler = trainer.scheduler.create(C.get()['scheduler'], optimizer)
 
@@ -65,9 +87,10 @@ def main(flags):
         train_acc, train_loss = train_one_epoch(epoch, model, train_loader, criterion, optimizer, device, flags)
 
         if epoch % 1 == 0 and flags.is_master:
-            val_acc, val_loss = evaluate(epoch, model, test_loader, device, flags, criterion)
+            val_acc, val_loss = evaluate(epoch, model, val_loader, device, flags, criterion)
             is_best = val_acc if is_best < val_acc else is_best
 
+        torch.cuda.synchronize()
         print(f'THE BEST MODEL val test :{is_best:3f}')
                 
     ### tensorboard
@@ -88,14 +111,15 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
     if flags.use_amp:
         scaler = torch.cuda.amp.GradScaler()
 
-    for step, (image, label) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
-        image = image.to(device=device, non_blocking=True)
-        label = label.to(device=device, non_blocking=True)
+    scores = []
+    for step, (image, targets) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
 
+        image = image.to(device=device, non_blocking=True)
+        targets = targets.to(device=device, non_blocking=True)
         if flags.use_amp:
             with torch.cuda.amp.autocast():
                 y_pred = model(image)
-                loss = criterion(y_pred, label)
+                loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
                 assert y_pred.dtype == torch.float16, f'{y_pred.dtype}'
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -104,35 +128,35 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
 
         else:
             y_pred = model(image)
-            loss = criterion(y_pred, label)
+            loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
         one_epoch_loss += loss.item()
-        _, y_pred = y_pred.max(1)            
-        train_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-        train_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
+        
+        pred_classes = []
+        for pred_class in y_pred:
+            _, y_pred = pred_class.max(1)
+            pred_classes.append(y_pred)
+        pred_classes = torch.stack(pred_classes, dim = 0)
 
-    train_acc = train_hit/train_total
-    train_loss = one_epoch_loss / (step + 1)
-    print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'Acc: {train_acc * 100}%')
+        if flags.is_master:
+            gather_y_true = [torch.ones_like(targets) for _ in range(dist.get_world_size())]
+            gather_y_pred = [torch.ones_like(pred_classes) for _ in range(dist.get_world_size())]
+            dist.all_gather(gather_y_true, targets)
+            dist.all_gather(gather_y_pred, pred_classes)
+            gather_y_true = torch.transpose(gather_y_true[0], 0, 1)
 
-    return train_acc, train_loss
+            semi_scores = [ recall_score(gather_y_true[i].cpu().numpy(), gather_y_pred[0][i].cpu().numpy(), average = 'macro', zero_division=1) for i in range(3)]
+            scores.append(np.average(semi_scores, weights=[2,1,1]))
+    
+    if flags.is_master:
+        final_score = np.average(scores)
+        train_loss = one_epoch_loss / (step + 1)
+        print( f'Epoch:{epoch + 1}' ,f'Losses: {train_loss}', f'macro-average-recall: {final_score}%')
 
-    # if flags.is_master:
-    #     gather_hit = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
-    #     torch.distributed.all_gather(gather_hit, train_hit)
-
-    #     gather_total = [torch.tensor([0], dtype=torch.float).to(device=device) for _ in range(dist.get_world_size())] 
-    #     torch.distributed.all_gather(gather_total, train_total)
-
-    #     print(gather_hit)
-    #     print(gather_total)
-    #     train_acc = sum(gather_hit) / sum(gather_total)
-        # print(f'Losses: {one_epoch_loss / (step + 1)}')
-    #     print(f'Acc: {train_acc * 100}%')
-    #     print(f'Train total: {gather_total}')
+    return final_score, train_loss
 
 @torch.no_grad()
 def evaluate(epoch, model, dataloader, device, flags, criterion):
@@ -143,19 +167,27 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
 
     model.eval()
 
-    for step, (image, label) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
+    val_scores = []
+    for step, (image, targets) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
+
         image = image.to(device=device, non_blocking=True)
-        label = label.to(device=device, non_blocking=True)
+        targets = targets.to(device=device, non_blocking=True)
 
         y_pred = model(image)
-        loss = criterion(y_pred, label)
+        loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
 
         validation_losses += loss.item()
-        _, y_pred = y_pred.max(1)
-        val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-        val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
-    
-    val_acc = val_hit / val_total
+        pred_classes = []
+        for pred_class in y_pred:
+            _, y_pred = pred_class.max(1)
+            pred_classes.append(y_pred)
+        pred_classes = torch.stack(pred_classes, dim = 0)
+        
+        targets = torch.transpose(targets, 0, 1)
+        val_semi_scores = [recall_score(targets[i].cpu().numpy(), pred_classes[i].cpu().numpy(), average='macro') for i in range(3)]
+        val_scores.append(np.average(val_semi_scores, weights=[2,1,1]))
+
+    val_acc = np.average(val_scores)
     val_loss = validation_losses / (step + 1)
     print(f'Val Losses: {val_loss}', f'Val Acc: {val_acc * 100}%')
     return val_acc, val_loss

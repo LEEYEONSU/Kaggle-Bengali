@@ -1,0 +1,43 @@
+dataset:
+  type: bengali
+  train_img_path : /workspace/yeonsu/Kaggle-Bengali/trainer/dataset/data/train_dataset.pickle
+  label_path : /workspace/yeonsu/Kaggle-Bengali/trainer/dataset/data/train.csv
+  train:
+    batch_size: 128
+    shuffle: True
+    drop_last: True
+    train: True
+    preprocess:
+      - type: randomcrop
+        params:
+          size: 32
+      - type: horizontal
+      - type: tensor
+      - type: normalize
+        params:
+          mean: [0.9432, 0.9432, 0.9432]
+          std: [0.1649, 0.1649, 0.1649]
+          inplace: True
+          
+  val:
+    path : ''
+    batch_size: 128
+    preprocess:
+      - type: tensor
+      - type: normalize
+        params:
+          mean: [0.9432, 0.9432, 0.9432]
+          std: [0.1649, 0.1649, 0.1649]
+
+  test:
+    path : ''
+    batch_size: 128
+    preprocess:
+      - type: tensor
+      - type: normalize
+        params:
+          mean: [0.9432, 0.9432, 0.9432]
+          std: [0.1649, 0.1649, 0.1649]
+
+
+
