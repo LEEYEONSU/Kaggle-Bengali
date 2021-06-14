@@ -11,6 +11,8 @@ class CustomDataset(Dataset):
 
     def __init__(self, img_path, label_path):
         super(CustomDataset, self).__init__()
+
+        
         with open (img_path, 'rb') as fr:
             self.x_data = pickle.load(fr)
         self.y_data = pd.read_csv(label_path).to_numpy()
@@ -32,12 +34,12 @@ class CustomDataset(Dataset):
         img = img.repeat(3,1,1)
 
         # ohe = [torch.eye(num_classes) for num_classes in [168, 11, 8]]
-        target1, target2, target3 = self.y_data[idx][1:4]
+        targets = torch.Tensor(list(self.y_data[idx][1:4])).long()
         # target1 = ohe[0][target1].long()
         # target2 = ohe[1][target2].long()
         # target3 = ohe[2][target3].long()
 
-        return img, target1, target2, target3
+        return img, targets
     
 if __name__ == '__main__':
 

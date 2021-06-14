@@ -112,16 +112,14 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
         scaler = torch.cuda.amp.GradScaler()
 
     scores = []
-    for step, (image, label_a, label_b, label_c) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
-        image = image.to(device=device, non_blocking=True)
-        label_a = label_a.to(device=device, non_blocking=True)
-        label_b = label_b.to(device=device, non_blocking=True)
-        label_c = label_c.to(device=device, non_blocking=True)
+    for step, (image, targets) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Train |{:3d}e".format(epoch), disable=not flags.is_master):
 
+        image = image.to(device=device, non_blocking=True)
+        targets = targets.to(device=device, non_blocking=True)
         if flags.use_amp:
             with torch.cuda.amp.autocast():
                 y_pred = model(image)
-                loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
+                loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
                 assert y_pred.dtype == torch.float16, f'{y_pred.dtype}'
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -130,39 +128,27 @@ def train_one_epoch(epoch, model, dataloader, criterion, optimizer, device, flag
 
         else:
             y_pred = model(image)
-            loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
+            loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             optimizer.step()
 
         one_epoch_loss += loss.item()
-        _, y_pred_a = y_pred[0].max(1)
-        _, y_pred_b = y_pred[1].max(1)
-        _, y_pred_c = y_pred[2].max(1)
+        
+        pred_classes = []
+        for pred_class in y_pred:
+            _, y_pred = pred_class.max(1)
+            pred_classes.append(y_pred)
+        pred_classes = torch.stack(pred_classes, dim = 0)
 
         if flags.is_master:
-            gather_y_true_a = [torch.ones_like(label_a) for _ in range(dist.get_world_size())]
-            gather_y_true_b = [torch.ones_like(label_b) for _ in range(dist.get_world_size())]
-            gather_y_true_c = [torch.ones_like(label_c) for _ in range(dist.get_world_size())]
-            gather_y_pred_a = [torch.ones_like(y_pred_a) for _ in range(dist.get_world_size())]
-            gather_y_pred_b = [torch.ones_like(y_pred_b) for _ in range(dist.get_world_size())]
-            gather_y_pred_c = [torch.ones_like(y_pred_c) for _ in range(dist.get_world_size())]
-            dist.all_gather(gather_y_true_a, label_a)
-            dist.all_gather(gather_y_true_b, label_b)
-            dist.all_gather(gather_y_true_c, label_c)
-            dist.all_gather(gather_y_pred_a, y_pred_a)
-            dist.all_gather(gather_y_pred_b, y_pred_b)
-            dist.all_gather(gather_y_pred_c, y_pred_c)
-            
-            semi_scores = []
-            semi_scores.append(recall_score(label_a.cpu().numpy(), y_pred_a.cpu().numpy(), average='macro'))
-            semi_scores.append(recall_score(label_b.cpu().numpy(), y_pred_b.cpu().numpy(), average='macro'))
-            semi_scores.append(recall_score(label_c.cpu().numpy(), y_pred_c.cpu().numpy(), average='macro'))
+            gather_y_true = [torch.ones_like(targets) for _ in range(dist.get_world_size())]
+            gather_y_pred = [torch.ones_like(pred_classes) for _ in range(dist.get_world_size())]
+            dist.all_gather(gather_y_true, targets)
+            dist.all_gather(gather_y_pred, pred_classes)
+            gather_y_true = torch.transpose(gather_y_true[0], 0, 1)
 
-            ### DDP 하려면 이부분 수정 ###
-            # semi_scores.append(recall_score(gather_y_true_a.detach().cpu().numpy(), gather_y_pred_a.detach().cpu().numpy(), average='macro'))
-            # semi_scores.append(recall_score(gather_y_true_b, gather_y_pred_b, average='macro'))
-            # semi_scores.append(recall_score(gather_y_true_c, gather_y_pred_c, average='macro'))
+            semi_scores = [ recall_score(gather_y_true[i].cpu().numpy(), gather_y_pred[0][i].cpu().numpy(), average = 'macro', zero_division=1) for i in range(3)]
             scores.append(np.average(semi_scores, weights=[2,1,1]))
     
     if flags.is_master:
@@ -182,30 +168,25 @@ def evaluate(epoch, model, dataloader, device, flags, criterion):
     model.eval()
 
     val_scores = []
-    for step, (image, label_a, label_b, label_c) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
+    for step, (image, targets) in tqdm(enumerate(dataloader), total=len(dataloader), desc="Validation |{:3d}e".format(epoch), disable=not flags.is_master):
+
         image = image.to(device=device, non_blocking=True)
-        label_a = label_a.to(device=device, non_blocking=True)
-        label_b = label_b.to(device=device, non_blocking=True)
-        label_c = label_c.to(device=device, non_blocking=True)
+        targets = targets.to(device=device, non_blocking=True)
 
         y_pred = model(image)
-        loss = criterion(y_pred[0], label_a) + criterion(y_pred[1], label_b) + criterion(y_pred[2], label_c)
+        loss = sum([criterion(y_pred[i], targets[:, i]) for i in range(3)])
 
         validation_losses += loss.item()
-        _, y_pred_a = y_pred[0].max(1)
-        _, y_pred_b = y_pred[1].max(1)
-        _, y_pred_c = y_pred[2].max(1)
+        pred_classes = []
+        for pred_class in y_pred:
+            _, y_pred = pred_class.max(1)
+            pred_classes.append(y_pred)
+        pred_classes = torch.stack(pred_classes, dim = 0)
         
-        val_semi_scores = []
-        val_semi_scores.append(recall_score(label_a.cpu().numpy(), y_pred_a.cpu().numpy(), average='macro'))
-        val_semi_scores.append(recall_score(label_b.cpu().numpy(), y_pred_b.cpu().numpy(), average='macro'))
-        val_semi_scores.append(recall_score(label_c.cpu().numpy(), y_pred_c.cpu().numpy(), average='macro'))
+        targets = torch.transpose(targets, 0, 1)
+        val_semi_scores = [recall_score(targets[i].cpu().numpy(), pred_classes[i].cpu().numpy(), average='macro') for i in range(3)]
         val_scores.append(np.average(val_semi_scores, weights=[2,1,1]))
 
-    #     val_hit += torch.tensor(y_pred.clone().detach().eq(label).sum(), dtype=torch.int).to(device=device, non_blocking=True)
-    #     val_total += torch.tensor(image.shape[0], dtype=torch.int).to(device=device, non_blocking=True)
-    
-    # val_acc = val_hit / val_total
     val_acc = np.average(val_scores)
     val_loss = validation_losses / (step + 1)
     print(f'Val Losses: {val_loss}', f'Val Acc: {val_acc * 100}%')
